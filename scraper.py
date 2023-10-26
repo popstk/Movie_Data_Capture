@@ -30,9 +30,12 @@ def get_data_from_json(
     :param specified_url: 指定的数据查询地址, 目前未使用
     :return 给定影片名称的具体信息
     """
-
-    actor_mapping_data = etree.parse(str(Path.home() / '.local' / 'share' / 'mdc' / 'mapping_actor.xml'))
-    info_mapping_data = etree.parse(str(Path.home() / '.local' / 'share' / 'mdc' / 'mapping_info.xml'))
+    try:
+        actor_mapping_data = etree.parse(str(Path.home() / '.local' / 'share' / 'mdc' / 'mapping_actor.xml'))
+        info_mapping_data = etree.parse(str(Path.home() / '.local' / 'share' / 'mdc' / 'mapping_info.xml'))
+    except:
+        actor_mapping_data = etree.fromstring("<html></html>", etree.HTMLParser())
+        info_mapping_data = etree.fromstring("<html></html>", etree.HTMLParser())
 
     conf = config.getInstance()
     # default fetch order list, from the beginning to the end
@@ -99,6 +102,10 @@ def get_data_from_json(
 
     # ================================================网站规则添加结束================================================
 
+    if json_data.get('title') == '':
+        print('[-]Movie Number or Title not found!')
+        return None
+
     title = json_data.get('title')
     actor_list = str(json_data.get('actor')).strip("[ ]").replace("'", '').split(',')  # 字符串转列表
     actor_list = [actor.strip() for actor in actor_list]  # 去除空白
@@ -134,11 +141,10 @@ def get_data_from_json(
         tag.remove('XXXX')
     while 'xxx' in tag:
         tag.remove('xxx')
-    actor = str(actor_list).strip("[ ]").replace("'", '').replace(" ", '')
-
-    if title == '' or number == '':
-        print('[-]Movie Number or Title not found!')
-        return None
+    if json_data['source'] =='pissplay': # pissplay actor为英文名，不用去除空格
+        actor = str(actor_list).strip("[ ]").replace("'", '')
+    else:
+        actor = str(actor_list).strip("[ ]").replace("'", '').replace(" ", '')
 
     # if imagecut == '3':
     #     DownloadFileWithFilename()
@@ -158,6 +164,10 @@ def get_data_from_json(
     if len(tmpArr) > 0:
         cover_small = tmpArr[0].strip('\"').strip('\'')
     # ====================处理异常字符 END================== #\/:*?"<>|
+
+    # 处理大写
+    if conf.number_uppercase():
+        json_data['number'] = number.upper()
 
     # 返回处理后的json_data
     json_data['title'] = title
@@ -197,9 +207,16 @@ def get_data_from_json(
                     key=conf.get_translate_key(),
                 )
             else:
-                t = translate(json_data[translate_value])
-            if len(t):
-                json_data[translate_value] = special_characters_replacement(t)
+                if len(json_data[translate_value]):
+                    if type(json_data[translate_value]) == str:
+                        json_data[translate_value] = special_characters_replacement(json_data[translate_value])
+                        json_data[translate_value] = translate(json_data[translate_value])
+                    else:
+                        for i in range(len(json_data[translate_value])):
+                            json_data[translate_value][i] = special_characters_replacement(
+                                json_data[translate_value][i])
+                        list_in_str = ",".join(json_data[translate_value])
+                        json_data[translate_value] = translate(list_in_str).split(',')
 
     if open_cc:
         cc_vars = conf.cc_convert_vars().split(",")
@@ -266,14 +283,22 @@ def get_data_from_json(
                     pass
 
     naming_rule = ""
+    original_naming_rule = ""
     for i in conf.naming_rule().split("+"):
         if i not in json_data:
             naming_rule += i.strip("'").strip('"')
+            original_naming_rule += i.strip("'").strip('"')
         else:
             item = json_data.get(i)
             naming_rule += item if type(item) is not list else "&".join(item)
+            # PATCH：处理[title]存在翻译的情况，后续NFO文件的original_name只会直接沿用naming_rule,这导致original_name非原始名
+            # 理应在翻译处处理 naming_rule和original_naming_rule
+            if i == 'title':
+                item = json_data.get('original_title')
+            original_naming_rule += item if type(item) is not list else "&".join(item)
 
     json_data['naming_rule'] = naming_rule
+    json_data['original_naming_rule'] = original_naming_rule
     return json_data
 
 
@@ -292,5 +317,6 @@ def special_characters_replacement(text) -> str:
             replace('&lsquo;', '‘').  # U+02018 LEFT SINGLE QUOTATION MARK
             replace('&rsquo;', '’').  # U+02019 RIGHT SINGLE QUOTATION MARK
             replace('&hellip;', '…').
-            replace('&amp;', '＆')
+            replace('&amp;', '＆').
+            replace("&", '＆')
             )
